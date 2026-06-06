@@ -17,6 +17,10 @@ function getEmailFrom() {
   return `AutoFollow <${from}>`;
 }
 
+function isSandboxSender() {
+  return getEmailFrom().includes('onboarding@resend.dev');
+}
+
 function getResend() {
   return hasValidResendKey() ? new Resend(process.env.RESEND_API_KEY) : null;
 }
@@ -244,15 +248,19 @@ export async function sendInviteEmail({
   const delivery = await deliverViaResend({ to, subject, html });
 
   if (!delivery.ok) {
-    const sandboxHint = delivery.message.includes('testing emails to your own email')
-      ? ' With onboarding@resend.dev you can only email your Resend account address until you verify a domain.'
-      : '';
+    console.error(`Invite email failed for ${to}:`, delivery.message);
+    const sandboxHint =
+      isSandboxSender() || delivery.message.includes('testing emails to your own email')
+        ? ' Verify bestechvision.com in Resend and set EMAIL_FROM=AutoFollow <noreply@bestechvision.com> to email any address.'
+        : '';
     return {
       sent: false,
       demo: false,
       message: `${delivery.message}${sandboxHint} Copy the invite link below.`,
     };
   }
+
+  console.log(`Invite email sent to ${to} (id: ${delivery.id})`);
 
   return {
     sent: true,
