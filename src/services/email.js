@@ -117,10 +117,16 @@ async function processScheduledEmail(scheduleId) {
   }
 
   try {
+    const text = schedule.body;
+    const html = `<div style="font-family: sans-serif; line-height: 1.6;">${schedule.body.replace(/\n/g, '<br>')}</div>`;
+    const replyTo = process.env.INVITE_REPLY_TO?.trim() || process.env.SUPPORT_EMAIL?.trim();
+
     const delivery = await deliverViaResend({
       to: schedule.lead_email,
       subject: schedule.subject,
-      html: `<div style="font-family: sans-serif; line-height: 1.6;">${schedule.body.replace(/\n/g, '<br>')}</div>`,
+      html,
+      text,
+      replyTo,
     });
 
     if (!delivery.ok) {
@@ -130,6 +136,8 @@ async function processScheduledEmail(scheduleId) {
       );
       throw new Error(delivery.message);
     }
+
+    console.log(`Lead email sent to ${schedule.lead_email} (id: ${delivery.id}) subject: ${schedule.subject}`);
 
     await pool.query(
       `UPDATE email_schedules SET status = 'sent', sent_at = NOW() WHERE id = ?`,
