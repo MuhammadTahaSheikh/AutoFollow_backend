@@ -1,0 +1,25 @@
+{
+  "name": "autofollow-backend",
+  "version": "1.0.0",
+  "description": "AutoFollow AI CRM - Backend API",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "db:init": "node src/db/init.js",
+    "db:test": "node src/db/test-connection.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0",
+    "node-cron": "^3.0.3",
+    "openai": "^4.67.0",
+    "resend": "^4.0.0"
+  }
+}
