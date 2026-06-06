@@ -26,18 +26,23 @@ function getResend() {
 }
 
 /** Resend v4 returns { data, error } and does not throw on API errors */
-async function deliverViaResend({ to, subject, html }) {
+async function deliverViaResend({ to, subject, html, text, replyTo }) {
   const client = getResend();
   if (!client) {
     return { ok: false, demo: true, message: 'No valid Resend API key configured' };
   }
 
-  const { data, error } = await client.emails.send({
+  const payload = {
     from: getEmailFrom(),
     to,
     subject,
     html,
-  });
+  };
+
+  if (text) payload.text = text;
+  if (replyTo) payload.replyTo = replyTo;
+
+  const { data, error } = await client.emails.send(payload);
 
   if (error) {
     const message = error.message || 'Resend rejected the email';
@@ -211,7 +216,20 @@ export async function sendInviteEmail({
   roleLabel,
   inviterName,
 }) {
-  const subject = `You're invited to join ${organizationName} on AutoFollow`;
+  const subject = `${inviterName} invited you to ${organizationName}`;
+
+  const text = [
+    'You\'re invited to AutoFollow AI CRM',
+    '',
+    `${inviterName} has invited you to join ${organizationName} as ${roleLabel}.`,
+    '',
+    'Accept your invitation:',
+    inviteLink,
+    '',
+    'This invitation expires in 7 days.',
+    '',
+    '— AutoFollow AI CRM',
+  ].join('\n');
 
   const html = `
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 560px; margin: 0 auto; color: #1e293b;">
@@ -245,13 +263,15 @@ export async function sendInviteEmail({
     };
   }
 
-  const delivery = await deliverViaResend({ to, subject, html });
+  const replyTo = process.env.INVITE_REPLY_TO?.trim() || process.env.SUPPORT_EMAIL?.trim();
+
+  const delivery = await deliverViaResend({ to, subject, html, text, replyTo });
 
   if (!delivery.ok) {
     console.error(`Invite email failed for ${to}:`, delivery.message);
     const sandboxHint =
       isSandboxSender() || delivery.message.includes('testing emails to your own email')
-        ? ' Verify bestechvision.com in Resend and set EMAIL_FROM=AutoFollow <noreply@bestechvision.com> to email any address.'
+        ? ' Verify your domain in Resend and set EMAIL_FROM to an address on that domain (e.g. invites@bestechvision.com).'
         : '';
     return {
       sent: false,

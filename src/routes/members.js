@@ -4,7 +4,7 @@ import pool from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { canChangeMemberRole, canInviteRole, ROLE_LABELS, ROLES } from '../utils/roles.js';
 import { sendInviteEmail } from '../services/email.js';
-import { getPrimaryFrontendUrl } from '../utils/frontendUrl.js';
+import { getInviteBaseUrl, getPrimaryFrontendUrl } from '../utils/frontendUrl.js';
 
 const router = Router();
 router.use(authenticate);
@@ -38,10 +38,10 @@ router.get('/invitations', requireRole('super_admin', 'admin'), async (req, res)
       [req.user.organization_id]
     );
 
-    const frontendUrl = getPrimaryFrontendUrl();
+    const inviteBase = getInviteBaseUrl();
     const withLinks = invitations.map((inv) => ({
       ...inv,
-      invite_link: `${frontendUrl}/register?invite=${inv.token}`,
+      invite_link: `${inviteBase}/register?invite=${inv.token}`,
     }));
 
     res.json({ invitations: withLinks });
@@ -97,7 +97,7 @@ router.post('/invitations', requireRole('super_admin', 'admin'), async (req, res
       [req.user.organization_id, normalizedEmail, role, token, req.user.id, expiresAt]
     );
 
-    const inviteLink = `${getPrimaryFrontendUrl()}/register?invite=${token}`;
+    const inviteLink = `${getInviteBaseUrl()}/register?invite=${token}`;
 
     const [orgs] = await pool.query(
       'SELECT name FROM organizations WHERE id = ?',
@@ -157,7 +157,7 @@ router.post('/invitations/:id/resend', requireRole('super_admin', 'admin'), asyn
       return res.status(400).json({ error: 'This invitation has expired' });
     }
 
-    const inviteLink = `${getPrimaryFrontendUrl()}/register?invite=${invitation.token}`;
+    const inviteLink = `${getInviteBaseUrl()}/register?invite=${invitation.token}`;
 
     const emailResult = await sendInviteEmail({
       to: invitation.email,
