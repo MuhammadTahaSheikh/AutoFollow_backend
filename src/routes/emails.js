@@ -13,7 +13,7 @@ router.use(authenticate);
 router.get('/', async (req, res) => {
   try {
     const leadId = req.query.leadId ? parseInt(req.query.leadId, 10) : null;
-    const schedules = await getEmailSchedules(req.user.id, leadId);
+    const schedules = await getEmailSchedules(req.user, leadId);
     res.json({ schedules });
   } catch (err) {
     console.error('Get emails error:', err);
@@ -38,7 +38,7 @@ router.post('/schedule', async (req, res) => {
       return res.status(400).json({ error: 'scheduledAt or delayHours is required' });
     }
 
-    const schedule = await scheduleEmail(req.user.id, {
+    const schedule = await scheduleEmail(req.user, {
       leadId,
       subject,
       body,
@@ -63,7 +63,7 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'leadId, subject, and body are required' });
     }
 
-    const result = await sendEmailNow(req.user.id, { leadId, subject, body });
+    const result = await sendEmailNow(req.user, { leadId, subject, body });
     res.json({ schedule: result });
   } catch (err) {
     if (err.message === 'Lead not found') {
@@ -76,7 +76,7 @@ router.post('/send', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const schedule = await cancelEmail(req.user.id, req.params.id);
+    const schedule = await cancelEmail(req.user, req.params.id);
     res.json({ schedule });
   } catch (err) {
     if (err.message.includes('not found')) {

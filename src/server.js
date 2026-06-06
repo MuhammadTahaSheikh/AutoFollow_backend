@@ -7,6 +7,7 @@ import leadsRoutes from './routes/leads.js';
 import aiRoutes from './routes/ai.js';
 import emailsRoutes from './routes/emails.js';
 import profileRoutes from './routes/profile.js';
+import membersRoutes from './routes/members.js';
 import { startEmailScheduler } from './jobs/emailScheduler.js';
 
 dotenv.config();
@@ -29,6 +30,7 @@ app.use('/api/leads', leadsRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/emails', emailsRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/members', membersRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);

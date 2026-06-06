@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import pool from '../config/db.js';
+import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -180,18 +181,14 @@ async function generateWithGemini(prompt) {
   throw lastError || new Error('All Gemini models failed');
 }
 
-export async function generateMessage(userId, leadId, type, customInstructions = '') {
-  const [leads] = await pool.query(
-    'SELECT * FROM leads WHERE id = ? AND user_id = ?',
-    [leadId, userId]
-  );
+export async function generateMessage(user, leadId, type, customInstructions = '') {
+  const lead = await canAccessLead(pool, user, leadId);
 
-  if (leads.length === 0) {
+  if (!lead) {
     throw new Error('Lead not found');
   }
 
-  const lead = leads[0];
-  const profile = await fetchUserProfile(userId);
+  const profile = await fetchUserProfile(user.id);
   const prompt = buildPrompt(type, lead, profile, customInstructions);
 
   const useGemini = AI_PROVIDER === 'gemini' && gemini;
@@ -199,7 +196,7 @@ export async function generateMessage(userId, leadId, type, customInstructions =
 
   if (!useGemini && !useOpenAI) {
     const demo = buildDemoMessage(type, lead, profile);
-    return saveDemoMessage(userId, leadId, type, demo);
+    return saveDemoMessage(user.id, leadId, type, demo);
   }
 
   try {
@@ -226,21 +223,37 @@ export async function generateMessage(userId, leadId, type, customInstructions =
 
     await pool.query(
       'INSERT INTO ai_templates (user_id, lead_id, type, content) VALUES (?, ?, ?, ?)',
-      [userId, leadId, type, content]
+      [user.id, leadId, type, content]
     );
 
     return { content, demo: false };
   } catch (err) {
     console.error('AI generation error:', err.message);
     const demo = buildDemoMessage(type, lead, profile);
-    return saveDemoMessage(userId, leadId, type, demo);
+    return saveDemoMessage(user.id, leadId, type, demo);
   }
 }
 
-export async function getTemplates(userId, leadId) {
+export async function getTemplates(user, leadId) {
+  const filter = leadListFilter(user, 'l');
+
+  if (leadId) {
+    const [templates] = await pool.query(
+      `SELECT at.* FROM ai_templates at
+       JOIN leads l ON at.lead_id = l.id
+       WHERE ${filter.where} AND at.lead_id = ?
+       ORDER BY at.created_at DESC`,
+      [...filter.params, leadId]
+    );
+    return templates;
+  }
+
   const [templates] = await pool.query(
-    'SELECT * FROM ai_templates WHERE user_id = ? AND lead_id = ? ORDER BY created_at DESC',
-    [userId, leadId]
+    `SELECT at.* FROM ai_templates at
+     JOIN leads l ON at.lead_id = l.id
+     WHERE ${filter.where}
+     ORDER BY at.created_at DESC`,
+    filter.params
   );
   return templates;
 }

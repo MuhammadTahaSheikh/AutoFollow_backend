@@ -19,7 +19,7 @@ router.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Invalid type. Use: follow_up, sales, re_engagement' });
     }
 
-    const result = await generateMessage(req.user.id, leadId, type, customInstructions);
+    const result = await generateMessage(req.user, leadId, type, customInstructions);
     res.json(result);
   } catch (err) {
     if (err.message === 'Lead not found') {
@@ -37,7 +37,7 @@ router.post('/generate', async (req, res) => {
 router.get('/templates', async (req, res) => {
   try {
     const leadId = req.query.leadId ? parseInt(req.query.leadId, 10) : null;
-    const templates = await getTemplates(req.user.id, leadId);
+    const templates = await getTemplates(req.user, leadId);
     res.json({ templates });
   } catch (err) {
     console.error('Get templates error:', err);
