@@ -1,0 +1,181 @@
+{
+  "name": "AutoFollow CRM - Capture Lead Email Replies (Hostinger IMAP)",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "simple",
+        "options": {}
+      },
+      "id": "imap-trigger",
+      "name": "Poll Hostinger Inbox",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "credentials": {
+        "imap": {
+          "id": "REPLACE_WITH_YOUR_IMAP_CREDENTIAL_ID",
+          "name": "Hostinger info@bestechvision.com"
+        }
+      },
+      "notes": "Use Email Trigger (IMAP), NOT Gmail. Hostinger: imap.hostinger.com:993 SSL. Account: info@bestechvision.com"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "conditions": [
+            {
+              "id": "not-from-us",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "bestechvision.com",
+              "operator": { "type": "string", "operation": "notContains" }
+            },
+            {
+              "id": "has-subject",
+              "leftValue": "={{ $json.subject }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "isNotEmpty" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-replies",
+      "name": "Filter Real Lead Replies",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [220, 0],
+      "notes": "Skip emails sent from your own domain (AutoFollow outbound copies)."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "from_email",
+              "name": "from_email",
+              "value": "={{ ($json.from?.value?.[0]?.address || $json.from?.address || $json.from || '').toString().match(/<([^>]+)>/)?.[1] || ($json.from?.value?.[0]?.address || $json.from?.address || $json.from || '').toString().replace(/<.*>/, '').trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "from_name",
+              "name": "from_name",
+              "value": "={{ ($json.from?.value?.[0]?.name || $json.from?.name || $json.from || '').toString().replace(/<.*>/, '').trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "subject",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "body_text",
+              "name": "body_text",
+              "value": "={{ $json.textPlain || $json.text || $json.textHtml?.replace(/<[^>]+>/g, ' ') || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "body_html",
+              "name": "body_html",
+              "value": "={{ $json.textHtml || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "message_id",
+              "name": "message_id",
+              "value": "={{ $json.metadata?.['message-id'] || $json.messageId || $json.uid || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "received_at",
+              "name": "received_at",
+              "value": "={{ $json.date || $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-payload",
+      "name": "Prepare CRM Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = [];\nfor (const item of $input.all()) {\n  let text = (item.json.body_text || '').replace(/\\r\\n/g, '\\n');\n  text = text.split(/\\nOn .+ wrote:\\s*\\n?/i)[0];\n  text = text.split(/\\nFrom: .+\\nSent:/i)[0];\n  text = text.replace(/\\n>+.*/gs, '').trim();\n  items.push({ json: { ...item.json, body_text: text || '(No content)' } });\n}\nreturn items;"
+      },
+      "id": "strip-quotes",
+      "name": "Strip Quoted Reply History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://51.20.191.5/api/webhooks/n8n/email-reply",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "x-webhook-secret", "value": "PASTE_YOUR_N8N_WEBHOOK_SECRET_HERE" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  from_email: $json.from_email,\n  from_name: $json.from_name,\n  subject: $json.subject,\n  body_text: $json.body_text,\n  body_html: $json.body_html || '',\n  message_id: String($json.message_id || ''),\n  received_at: $json.received_at,\n  source: 'n8n'\n} }}",
+        "options": {}
+      },
+      "id": "crm-webhook",
+      "name": "Send to CRM Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "id": "status-ok",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 201,
+              "operator": { "type": "number", "operation": "equals" }
+            }
+          ],
+          "combinator": "or"
+        }
+      },
+      "id": "check-response",
+      "name": "Check CRM Response",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 0]
+    }
+  ],
+  "connections": {
+    "Poll Hostinger Inbox": {
+      "main": [[{ "node": "Filter Real Lead Replies", "type": "main", "index": 0 }]]
+    },
+    "Filter Real Lead Replies": {
+      "main": [[{ "node": "Prepare CRM Payload", "type": "main", "index": 0 }]]
+    },
+    "Prepare CRM Payload": {
+      "main": [[{ "node": "Strip Quoted Reply History", "type": "main", "index": 0 }]]
+    },
+    "Strip Quoted Reply History": {
+      "main": [[{ "node": "Send to CRM Webhook", "type": "main", "index": 0 }]]
+    },
+    "Send to CRM Webhook": {
+      "main": [[{ "node": "Check CRM Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateCredsSetupCompleted": false }
+}

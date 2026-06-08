@@ -13,6 +13,22 @@ function toMysqlUtc(date) {
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/** Strip Gmail/Outlook quoted reply history from plain-text body. */
+export function stripQuotedReplyText(text) {
+  if (!text?.trim()) return '';
+
+  let cleaned = text.replace(/\r\n/g, '\n');
+
+  // Gmail: "On Mon, Jun 8, 2026 at 6:14 AM Name <email> wrote:"
+  cleaned = cleaned.split(/\nOn .+ wrote:\s*\n?/i)[0];
+  // Outlook: "From: ... Sent: ..."
+  cleaned = cleaned.split(/\nFrom: .+\nSent:/i)[0];
+  // Quoted lines starting with >
+  cleaned = cleaned.replace(/\n>+.*/gs, '');
+
+  return cleaned.trim();
+}
+
 async function findLeadByReplyEmail(fromEmail, organizationId) {
   const email = normalizeEmail(fromEmail);
   if (!email) return null;
@@ -76,7 +92,8 @@ export async function recordInboundReply(payload) {
     throw err;
   }
 
-  const bodyText = body_text?.trim() || body_html?.replace(/<[^>]+>/g, ' ').trim() || '(No content)';
+  const rawBody = body_text?.trim() || body_html?.replace(/<[^>]+>/g, ' ').trim() || '';
+  const bodyText = stripQuotedReplyText(rawBody) || rawBody || '(No content)';
   const receivedAt = received_at ? toMysqlUtc(received_at) : toMysqlUtc(new Date());
 
   const [result] = await pool.query(
