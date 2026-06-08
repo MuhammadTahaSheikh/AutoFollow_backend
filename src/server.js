@@ -8,6 +8,10 @@ import aiRoutes from './routes/ai.js';
 import emailsRoutes from './routes/emails.js';
 import profileRoutes from './routes/profile.js';
 import membersRoutes from './routes/members.js';
+import activitiesRoutes from './routes/activities.js';
+import notesRoutes from './routes/notes.js';
+import sequencesRoutes from './routes/sequences.js';
+import webhooksRoutes from './routes/webhooks.js';
 import { startEmailScheduler } from './jobs/emailScheduler.js';
 
 dotenv.config();
@@ -42,6 +46,10 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/emails', emailsRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/members', membersRoutes);
+app.use('/api/activities', activitiesRoutes);
+app.use('/api/notes', notesRoutes);
+app.use('/api/sequences', sequencesRoutes);
+app.use('/api/webhooks', webhooksRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);

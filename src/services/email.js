@@ -1,6 +1,8 @@
 import { Resend } from 'resend';
 import pool from '../config/db.js';
 import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
+import { logActivity } from './activity.js';
+import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
 
 function hasValidResendKey() {
   const key = process.env.RESEND_API_KEY?.trim();
@@ -76,7 +78,25 @@ export async function scheduleEmail(user, { leadId, subject, body, scheduledAt }
   );
 
   const [rows] = await pool.query('SELECT * FROM email_schedules WHERE id = ?', [result.insertId]);
-  return rows[0];
+  const schedule = rows[0];
+
+  const [leadRows] = await pool.query(
+    'SELECT organization_id, name FROM leads WHERE id = ?',
+    [leadId]
+  );
+
+  if (leadRows[0]) {
+    await logActivity(pool, {
+      organizationId: leadRows[0].organization_id,
+      leadId,
+      userId: user.id,
+      activityType: ACTIVITY_TYPES.EMAIL_SCHEDULED,
+      description: `Email scheduled: "${subject}"`,
+      metadata: { emailScheduleId: schedule.id, scheduledAt: schedule.scheduled_at },
+    });
+  }
+
+  return schedule;
 }
 
 export async function sendEmailNow(user, { leadId, subject, body }) {
@@ -95,8 +115,39 @@ export async function sendEmailNow(user, { leadId, subject, body }) {
   return processScheduledEmail(result.insertId);
 }
 
+async function syncLeadFollowUpStatus(leadId, scheduledAt, status, sentAt = null) {
+  await pool.query(
+    `UPDATE lead_follow_ups SET status = ?, sent_at = COALESCE(?, sent_at)
+     WHERE lead_id = ? AND scheduled_at = ? AND status IN ('pending', 'sent', 'failed')`,
+    [status, sentAt, leadId, scheduledAt]
+  );
+}
+
+async function logEmailActivity(schedule, activityType, description, extraMetadata = {}) {
+  const [leadRows] = await pool.query(
+    'SELECT organization_id FROM leads WHERE id = ?',
+    [schedule.lead_id]
+  );
+  if (!leadRows[0]) return;
+
+  await logActivity(pool, {
+    organizationId: leadRows[0].organization_id,
+    leadId: schedule.lead_id,
+    userId: schedule.user_id,
+    activityType,
+    description,
+    metadata: { emailScheduleId: schedule.id, subject: schedule.subject, ...extraMetadata },
+  });
+}
+
 async function processScheduledEmail(scheduleId) {
-  const [rows] = await pool.query('SELECT es.*, l.email as lead_email, l.name as lead_name FROM email_schedules es JOIN leads l ON es.lead_id = l.id WHERE es.id = ?', [scheduleId]);
+  const [rows] = await pool.query(
+    `SELECT es.*, l.email as lead_email, l.name as lead_name, l.organization_id
+     FROM email_schedules es
+     JOIN leads l ON es.lead_id = l.id
+     WHERE es.id = ?`,
+    [scheduleId]
+  );
 
   if (rows.length === 0) return null;
 
@@ -106,6 +157,12 @@ async function processScheduledEmail(scheduleId) {
     await pool.query(
       `UPDATE email_schedules SET status = 'sent', sent_at = NOW() WHERE id = ?`,
       [scheduleId]
+    );
+    await syncLeadFollowUpStatus(schedule.lead_id, schedule.scheduled_at, 'sent', toMysqlUtc(new Date()));
+    await logEmailActivity(
+      schedule,
+      ACTIVITY_TYPES.EMAIL_SENT,
+      `Email sent: "${schedule.subject}" (demo mode)`
     );
     return {
       ...schedule,
@@ -134,6 +191,13 @@ async function processScheduledEmail(scheduleId) {
         `UPDATE email_schedules SET status = 'failed', error_message = ? WHERE id = ?`,
         [delivery.message, scheduleId]
       );
+      await syncLeadFollowUpStatus(schedule.lead_id, schedule.scheduled_at, 'failed');
+      await logEmailActivity(
+        schedule,
+        ACTIVITY_TYPES.EMAIL_FAILED,
+        `Email failed: "${schedule.subject}"`,
+        { error: delivery.message }
+      );
       throw new Error(delivery.message);
     }
 
@@ -142,6 +206,12 @@ async function processScheduledEmail(scheduleId) {
     await pool.query(
       `UPDATE email_schedules SET status = 'sent', sent_at = NOW() WHERE id = ?`,
       [scheduleId]
+    );
+    await syncLeadFollowUpStatus(schedule.lead_id, schedule.scheduled_at, 'sent', toMysqlUtc(new Date()));
+    await logEmailActivity(
+      schedule,
+      ACTIVITY_TYPES.EMAIL_SENT,
+      `Email sent: "${schedule.subject}"`
     );
 
     const [updated] = await pool.query('SELECT * FROM email_schedules WHERE id = ?', [scheduleId]);
@@ -155,6 +225,13 @@ async function processScheduledEmail(scheduleId) {
     await pool.query(
       `UPDATE email_schedules SET status = 'failed', error_message = ? WHERE id = ?`,
       [err.message, scheduleId]
+    );
+    await syncLeadFollowUpStatus(schedule.lead_id, schedule.scheduled_at, 'failed');
+    await logEmailActivity(
+      schedule,
+      ACTIVITY_TYPES.EMAIL_FAILED,
+      `Email failed: "${schedule.subject}"`,
+      { error: err.message }
     );
     throw err;
   }
@@ -214,7 +291,16 @@ export async function cancelEmail(user, scheduleId) {
   }
 
   const [rows] = await pool.query('SELECT * FROM email_schedules WHERE id = ?', [scheduleId]);
-  return rows[0];
+  const schedule = rows[0];
+
+  await syncLeadFollowUpStatus(schedule.lead_id, schedule.scheduled_at, 'cancelled');
+  await logEmailActivity(
+    schedule,
+    ACTIVITY_TYPES.EMAIL_CANCELLED,
+    `Email cancelled: "${schedule.subject}"`
+  );
+
+  return schedule;
 }
 
 export async function sendInviteEmail({

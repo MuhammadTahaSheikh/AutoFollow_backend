@@ -6,9 +6,26 @@ import {
   getEmailSchedules,
   cancelEmail,
 } from '../services/email.js';
+import { getEmailReplies, getAllEmailReplies } from '../services/emailReplies.js';
 
 const router = Router();
 router.use(authenticate);
+
+router.get('/replies', async (req, res) => {
+  try {
+    const leadId = req.query.leadId ? parseInt(req.query.leadId, 10) : null;
+    const replies = leadId
+      ? await getEmailReplies(req.user, leadId)
+      : await getAllEmailReplies(req.user);
+    res.json({ replies });
+  } catch (err) {
+    if (err.message === 'Lead not found') {
+      return res.status(404).json({ error: err.message });
+    }
+    console.error('Get email replies error:', err);
+    res.status(500).json({ error: 'Failed to fetch email replies' });
+  }
+});
 
 router.get('/', async (req, res) => {
   try {

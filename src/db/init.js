@@ -228,6 +228,99 @@ async function initDatabase() {
     )
   `);
 
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS activities (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      organization_id INT NOT NULL,
+      lead_id INT,
+      user_id INT NOT NULL,
+      activity_type VARCHAR(50) NOT NULL,
+      description TEXT NOT NULL,
+      metadata_json JSON,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE SET NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_lead_created (lead_id, created_at),
+      INDEX idx_org_created (organization_id, created_at)
+    )
+  `);
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS lead_notes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      lead_id INT NOT NULL,
+      user_id INT NOT NULL,
+      note TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      INDEX idx_lead_notes (lead_id, created_at)
+    )
+  `);
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS follow_up_sequences (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      organization_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      is_active TINYINT(1) DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      INDEX idx_org_active (organization_id, is_active)
+    )
+  `);
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS follow_up_steps (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      sequence_id INT NOT NULL,
+      step_number INT NOT NULL,
+      delay_hours INT NOT NULL,
+      subject VARCHAR(500) NOT NULL,
+      message_template TEXT NOT NULL,
+      FOREIGN KEY (sequence_id) REFERENCES follow_up_sequences(id) ON DELETE CASCADE,
+      INDEX idx_sequence_steps (sequence_id, step_number)
+    )
+  `);
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS lead_follow_ups (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      lead_id INT NOT NULL,
+      step_id INT NOT NULL,
+      scheduled_at DATETIME NOT NULL,
+      sent_at DATETIME,
+      status ENUM('pending', 'sent', 'failed', 'cancelled') DEFAULT 'pending',
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+      FOREIGN KEY (step_id) REFERENCES follow_up_steps(id) ON DELETE CASCADE,
+      INDEX idx_lead_follow_ups (lead_id, scheduled_at)
+    )
+  `);
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS email_replies (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      organization_id INT NOT NULL,
+      lead_id INT NOT NULL,
+      from_email VARCHAR(255) NOT NULL,
+      from_name VARCHAR(255),
+      subject VARCHAR(500) NOT NULL,
+      body_text TEXT NOT NULL,
+      body_html TEXT,
+      message_id VARCHAR(255),
+      in_reply_to VARCHAR(255),
+      received_at DATETIME NOT NULL,
+      source VARCHAR(50) DEFAULT 'n8n',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE,
+      INDEX idx_lead_replies (lead_id, received_at),
+      UNIQUE KEY uniq_message_id (message_id)
+    )
+  `);
+
   await migrateExistingUsers(connection);
 
   console.log(`Database "${dbName}" initialized successfully.`);

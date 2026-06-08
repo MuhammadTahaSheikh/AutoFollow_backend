@@ -7,6 +7,9 @@ import {
   isLeadManager,
   leadListFilter,
 } from '../utils/leadAccess.js';
+import { logActivity } from '../services/activity.js';
+import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
+import { attachDefaultSequenceToLead } from '../services/sequences.js';
 
 const router = Router();
 router.use(authenticate);
@@ -38,13 +41,13 @@ async function attachAssignees(leads) {
   }));
 }
 
-async function syncAssignments(leadId, userIds, assignedBy, organizationId) {
+async function syncAssignments(leadId, userIds, assignedBy, organizationId, actorUser) {
   const uniqueIds = [...new Set(userIds.map((id) => parseInt(id, 10)).filter(Boolean))];
 
   let validIds = [];
   if (uniqueIds.length > 0) {
     const [validUsers] = await pool.query(
-      `SELECT id FROM users
+      `SELECT id, name FROM users
        WHERE organization_id = ? AND role = 'user' AND id IN (?)`,
       [organizationId, uniqueIds]
     );
@@ -58,6 +61,19 @@ async function syncAssignments(leadId, userIds, assignedBy, organizationId) {
       `INSERT INTO lead_assignments (lead_id, user_id, assigned_by) VALUES (?, ?, ?)`,
       [leadId, userId, assignedBy]
     );
+  }
+
+  if (actorUser && validIds.length > 0) {
+    const [leadRows] = await pool.query('SELECT name FROM leads WHERE id = ?', [leadId]);
+    const leadName = leadRows[0]?.name || 'lead';
+    await logActivity(pool, {
+      organizationId,
+      leadId,
+      userId: actorUser.id,
+      activityType: ACTIVITY_TYPES.LEAD_ASSIGNED,
+      description: `Lead assigned: ${leadName}`,
+      metadata: { assignedUserIds: validIds },
+    });
   }
 
   return fetchLeadAssignees(pool, leadId);
@@ -168,7 +184,8 @@ router.put('/:id/assignments', requireRole('super_admin', 'admin'), async (req, 
       lead.id,
       userIds,
       req.user.id,
-      req.user.organization_id
+      req.user.organization_id,
+      req.user
     );
 
     res.json({ assignees });
@@ -248,12 +265,24 @@ router.post('/', async (req, res) => {
         leadId,
         assignedUserIds,
         req.user.id,
-        req.user.organization_id
+        req.user.organization_id,
+        req.user
       );
     }
 
     const [leads] = await pool.query('SELECT * FROM leads WHERE id = ?', [leadId]);
     let lead = leads[0];
+
+    await logActivity(pool, {
+      organizationId: req.user.organization_id,
+      leadId,
+      userId: req.user.id,
+      activityType: ACTIVITY_TYPES.LEAD_CREATED,
+      description: `Lead created: ${lead.name}`,
+      metadata: { email: lead.email, source: lead.source, status: lead.status },
+    });
+
+    await attachDefaultSequenceToLead(req.user, lead);
 
     if (isLeadManager(req.user.role)) {
       const assignees = await fetchLeadAssignees(pool, leadId);
@@ -284,6 +313,17 @@ router.put('/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid status' });
     }
 
+    if (status && status !== lead.status) {
+      await logActivity(pool, {
+        organizationId: req.user.organization_id,
+        leadId: lead.id,
+        userId: req.user.id,
+        activityType: ACTIVITY_TYPES.LEAD_STATUS_CHANGED,
+        description: `Status changed from ${lead.status} to ${status}`,
+        metadata: { from: lead.status, to: status },
+      });
+    }
+
     await pool.query(
       `UPDATE leads SET
         name = COALESCE(?, name),
@@ -296,6 +336,14 @@ router.put('/:id', async (req, res) => {
       [name, email, phone, source, status, notes, req.params.id, req.user.organization_id]
     );
 
+    await logActivity(pool, {
+      organizationId: req.user.organization_id,
+      leadId: lead.id,
+      userId: req.user.id,
+      activityType: ACTIVITY_TYPES.LEAD_UPDATED,
+      description: `Lead updated: ${name || lead.name}`,
+    });
+
     if (
       isLeadManager(req.user.role) &&
       Array.isArray(assignedUserIds)
@@ -304,7 +352,8 @@ router.put('/:id', async (req, res) => {
         lead.id,
         assignedUserIds,
         req.user.id,
-        req.user.organization_id
+        req.user.organization_id,
+        req.user
       );
     }
 
@@ -333,6 +382,15 @@ router.delete('/:id', requireRole('super_admin', 'admin'), async (req, res) => {
     if (!lead) {
       return res.status(404).json({ error: 'Lead not found' });
     }
+
+    await logActivity(pool, {
+      organizationId: req.user.organization_id,
+      leadId: lead.id,
+      userId: req.user.id,
+      activityType: ACTIVITY_TYPES.LEAD_DELETED,
+      description: `Lead deleted: ${lead.name}`,
+      metadata: { email: lead.email },
+    });
 
     await pool.query('DELETE FROM leads WHERE id = ?', [req.params.id]);
 

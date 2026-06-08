@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import pool from '../config/db.js';
 import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
+import { logActivity } from './activity.js';
+import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -131,6 +133,22 @@ async function saveDemoMessage(userId, leadId, type, content) {
     'INSERT INTO ai_templates (user_id, lead_id, type, content) VALUES (?, ?, ?, ?)',
     [userId, leadId, type, content]
   );
+
+  const [leadRows] = await pool.query(
+    'SELECT organization_id, name FROM leads WHERE id = ?',
+    [leadId]
+  );
+  if (leadRows[0]) {
+    await logActivity(pool, {
+      organizationId: leadRows[0].organization_id,
+      leadId,
+      userId,
+      activityType: ACTIVITY_TYPES.AI_MESSAGE_GENERATED,
+      description: `AI message generated for ${leadRows[0].name}`,
+      metadata: { type, demo: true },
+    });
+  }
+
   return { content, demo: true };
 }
 
@@ -225,6 +243,15 @@ export async function generateMessage(user, leadId, type, customInstructions = '
       'INSERT INTO ai_templates (user_id, lead_id, type, content) VALUES (?, ?, ?, ?)',
       [user.id, leadId, type, content]
     );
+
+    await logActivity(pool, {
+      organizationId: lead.organization_id,
+      leadId,
+      userId: user.id,
+      activityType: ACTIVITY_TYPES.AI_MESSAGE_GENERATED,
+      description: `AI message generated for ${lead.name}`,
+      metadata: { type },
+    });
 
     return { content, demo: false };
   } catch (err) {
