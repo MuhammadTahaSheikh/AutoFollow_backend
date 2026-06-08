@@ -1,0 +1,66 @@
+{
+  "family": "autofollow-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "autofollow-api",
+      "image": "YOUR_ACCOUNT_ID.dkr.ecr.YOUR_AWS_REGION.amazonaws.com/autofollow-backend:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 5000,
+          "hostPort": 5000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "5000" },
+        { "name": "HOST", "value": "0.0.0.0" },
+        { "name": "DB_PORT", "value": "3306" },
+        { "name": "DB_SKIP_CREATE", "value": "true" },
+        { "name": "JWT_EXPIRES_IN", "value": "7d" },
+        { "name": "AI_PROVIDER", "value": "gemini" },
+        { "name": "GEMINI_MODEL", "value": "gemini-2.5-flash-lite" },
+        { "name": "EMAIL_FROM", "value": "AutoFollow <noreply@bestechvision.com>" },
+        { "name": "INVITE_REPLY_TO", "value": "info@bestechvision.com" },
+        { "name": "SUPPORT_EMAIL", "value": "info@bestechvision.com" },
+        {
+          "name": "FRONTEND_URL",
+          "value": "https://auto-follow-frontend.vercel.app,http://localhost:3000,http://localhost:3001"
+        }
+      ],
+      "secrets": [
+        { "name": "DB_HOST", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/DB_HOST" },
+        { "name": "DB_USER", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/DB_USER" },
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/DB_PASSWORD" },
+        { "name": "DB_NAME", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/DB_NAME" },
+        { "name": "JWT_SECRET", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/JWT_SECRET" },
+        { "name": "GEMINI_API_KEY", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/GEMINI_API_KEY" },
+        { "name": "RESEND_API_KEY", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/RESEND_API_KEY" },
+        { "name": "N8N_WEBHOOK_SECRET", "valueFrom": "arn:aws:ssm:YOUR_AWS_REGION:YOUR_ACCOUNT_ID:parameter/autofollow/N8N_WEBHOOK_SECRET" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/autofollow-api",
+          "awslogs-region": "YOUR_AWS_REGION",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "wget -qO- http://127.0.0.1:5000/api/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}
