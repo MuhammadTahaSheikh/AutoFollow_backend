@@ -7,6 +7,51 @@ function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
 }
 
+/** Pull an email address out of strings like "Name <user@mail.com>" or objects from n8n/IMAP. */
+function extractEmailAddress(value) {
+  if (value == null || value === '') return '';
+
+  if (typeof value === 'object') {
+    const nested =
+      value.address ||
+      value.email ||
+      value.value?.[0]?.address ||
+      value.text ||
+      value.mailbox;
+    if (nested) return extractEmailAddress(nested);
+    return '';
+  }
+
+  const str = String(value).trim();
+  const angleMatch = str.match(/<([^>]+@[^>]+)>/i);
+  if (angleMatch) return normalizeEmail(angleMatch[1]);
+
+  const cleaned = str.replace(/[<>'"]/g, '').trim();
+  if (cleaned.includes('@')) return normalizeEmail(cleaned);
+
+  return '';
+}
+
+function resolveFromEmail(payload) {
+  const candidates = [
+    payload.from_email,
+    payload.fromEmail,
+    payload.from,
+    payload.sender,
+    payload['return-path'],
+    payload.return_path,
+    payload.metadata?.['return-path'],
+    payload.metadata?.returnPath,
+  ];
+
+  for (const candidate of candidates) {
+    const email = extractEmailAddress(candidate);
+    if (email) return email;
+  }
+
+  return '';
+}
+
 function toMysqlUtc(date) {
   const d = date instanceof Date ? date : new Date(date);
   if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 19).replace('T', ' ');
@@ -70,7 +115,7 @@ export async function recordInboundReply(payload) {
     organization_id,
   } = payload;
 
-  const fromEmail = normalizeEmail(from_email);
+  const fromEmail = resolveFromEmail(payload);
   if (!fromEmail) {
     throw new Error('from_email is required');
   }

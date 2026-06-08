@@ -56,7 +56,7 @@
             {
               "id": "from_email",
               "name": "from_email",
-              "value": "={{ ($json.from?.value?.[0]?.address || $json.from?.address || $json.from || '').toString().match(/<([^>]+)>/)?.[1] || ($json.from?.value?.[0]?.address || $json.from?.address || $json.from || '').toString().replace(/<.*>/, '').trim() }}",
+              "value": "={{ ($json.from?.value?.[0]?.address || $json.from?.address || (typeof $json.from === 'string' ? ($json.from.match(/<([^>]+@[^>]+)>/)?.[1] || ($json.from.includes('@') ? $json.from.replace(/[<>'\"]/g, '').trim() : '')) : '') || $json.metadata?.['return-path']?.toString().match(/<([^>]+@[^>]+)>/)?.[1] || $json.metadata?.['return-path']?.toString().replace(/[<>'\"]/g, '').trim() || '') }}",
               "type": "string"
             },
             {
@@ -94,6 +94,18 @@
               "name": "received_at",
               "value": "={{ $json.date || $now.toISO() }}",
               "type": "string"
+            },
+            {
+              "id": "raw_from",
+              "name": "raw_from",
+              "value": "={{ $json.from }}",
+              "type": "string"
+            },
+            {
+              "id": "return_path",
+              "name": "return_path",
+              "value": "={{ $json.metadata?.['return-path'] || '' }}",
+              "type": "string"
             }
           ]
         },
@@ -128,7 +140,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {\n  from_email: $json.from_email,\n  from_name: $json.from_name,\n  subject: $json.subject,\n  body_text: $json.body_text,\n  body_html: $json.body_html || '',\n  message_id: String($json.message_id || ''),\n  received_at: $json.received_at,\n  source: 'n8n'\n} }}",
+        "jsonBody": "={{ {\n  from_email: $json.from_email,\n  from: $json.raw_from || $json.from_email,\n  'return-path': $json.return_path,\n  from_name: $json.from_name,\n  subject: $json.subject,\n  body_text: $json.body_text,\n  body_html: $json.body_html || '',\n  message_id: String($json.message_id || ''),\n  received_at: $json.received_at,\n  source: 'n8n'\n} }}",
         "options": {}
       },
       "id": "crm-webhook",
