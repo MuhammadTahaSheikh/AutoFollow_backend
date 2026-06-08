@@ -22,7 +22,7 @@ const GEMINI_FALLBACK_MODELS = [
   'gemini-1.5-flash',
 ].filter((m, i, arr) => arr.indexOf(m) === i);
 
-const SYSTEM_PROMPT = `You are a professional sales and follow-up email writer for AutoFollow AI CRM.
+const SYSTEM_PROMPT = `You are a professional sales and follow-up email writer for bestechVison AI CRM.
 Write personalized, concise emails that feel human and warm — not robotic or overly salesy.
 Use the sender's real business details provided in the prompt. NEVER use bracket placeholders like [Your Name], [Company], [Link], or similar — always use the actual values given.
 If a detail is missing, omit that sentence rather than inventing a placeholder.
@@ -77,7 +77,7 @@ ${lead.source ? `- Source: ${lead.source}` : ''}`;
 function buildDemoMessage(type, lead, profile) {
   const name = profile.name || 'Your Team';
   const title = profile.job_title || '';
-  const company = profile.company_name || 'AutoFollow AI CRM';
+  const company = profile.company_name || 'bestechVison AI CRM';
   const phone = profile.phone || '';
   const calendar = profile.calendar_url || '';
   const services = profile.services_description || 'streamline your follow-ups and boost sales with AI-powered outreach';

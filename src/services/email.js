@@ -14,9 +14,9 @@ function hasValidResendKey() {
 
 function getEmailFrom() {
   const from = process.env.EMAIL_FROM?.trim();
-  if (!from) return 'AutoFollow <onboarding@resend.dev>';
+  if (!from) return 'bestechVison <onboarding@resend.dev>';
   if (from.includes('<')) return from;
-  return `AutoFollow <${from}>`;
+  return `bestechVison <${from}>`;
 }
 
 function isSandboxSender() {
@@ -313,7 +313,7 @@ export async function sendInviteEmail({
   const subject = `${inviterName} invited you to ${organizationName}`;
 
   const text = [
-    'You\'re invited to AutoFollow AI CRM',
+    'You\'re invited to bestechVison AI CRM',
     '',
     `${inviterName} has invited you to join ${organizationName} as ${roleLabel}.`,
     '',
@@ -322,30 +322,30 @@ export async function sendInviteEmail({
     '',
     'This invitation expires in 7 days.',
     '',
-    '— AutoFollow AI CRM',
+    '— bestechVison AI CRM',
   ].join('\n');
 
   const html = `
     <div style="font-family: sans-serif; line-height: 1.6; max-width: 560px; margin: 0 auto; color: #1e293b;">
-      <h2 style="color: #4f46e5; margin-bottom: 8px;">You're invited!</h2>
+      <h2 style="color: #2013d1; margin-bottom: 8px;">You're invited!</h2>
       <p>Hi,</p>
       <p>
         <strong>${inviterName}</strong> has invited you to join
-        <strong>${organizationName}</strong> on AutoFollow AI CRM as <strong>${roleLabel}</strong>.
+        <strong>${organizationName}</strong> on bestechVison AI CRM as <strong>${roleLabel}</strong>.
       </p>
       <p>Click the button below to create your account and join the team:</p>
       <p style="margin: 28px 0;">
         <a href="${inviteLink}"
-           style="background: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block;">
+           style="background: #2013d1; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; display: inline-block;">
           Accept invitation
         </a>
       </p>
       <p style="font-size: 14px; color: #64748b;">
         Or copy this link into your browser:<br>
-        <a href="${inviteLink}" style="color: #4f46e5; word-break: break-all;">${inviteLink}</a>
+        <a href="${inviteLink}" style="color: #2013d1; word-break: break-all;">${inviteLink}</a>
       </p>
       <p style="font-size: 14px; color: #64748b;">This invitation expires in 7 days.</p>
-      <p style="font-size: 14px; color: #94a3b8; margin-top: 32px;">— AutoFollow AI CRM</p>
+      <p style="font-size: 14px; color: #94a3b8; margin-top: 32px;">— bestechVison AI CRM</p>
     </div>
   `;
 

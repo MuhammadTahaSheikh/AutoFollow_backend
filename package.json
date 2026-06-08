@@ -1,7 +1,7 @@
 {
   "name": "autofollow-backend",
   "version": "1.0.0",
-  "description": "AutoFollow AI CRM - Backend API",
+  "description": "bestechVison AI CRM - Backend API",
   "main": "src/server.js",
   "type": "module",
   "scripts": {

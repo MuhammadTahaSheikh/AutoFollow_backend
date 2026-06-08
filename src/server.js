@@ -49,7 +49,7 @@ app.use(cors({
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'AutoFollow AI CRM API' });
+  res.json({ status: 'ok', service: 'bestechVison AI CRM API' });
 });
 
 app.use('/api/auth', authRoutes);
@@ -69,6 +69,6 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`AutoFollow API running on http://${HOST}:${PORT} (${process.env.NODE_ENV || 'development'})`);
+  console.log(`bestechVison API running on http://${HOST}:${PORT} (${process.env.NODE_ENV || 'development'})`);
   startEmailScheduler();
 });

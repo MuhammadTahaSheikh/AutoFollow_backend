@@ -27,7 +27,7 @@
         { "name": "JWT_EXPIRES_IN", "value": "7d" },
         { "name": "AI_PROVIDER", "value": "gemini" },
         { "name": "GEMINI_MODEL", "value": "gemini-2.5-flash-lite" },
-        { "name": "EMAIL_FROM", "value": "AutoFollow <noreply@bestechvision.com>" },
+        { "name": "EMAIL_FROM", "value": "bestechVison <noreply@bestechvision.com>" },
         { "name": "INVITE_REPLY_TO", "value": "info@bestechvision.com" },
         { "name": "SUPPORT_EMAIL", "value": "info@bestechvision.com" },
         {
