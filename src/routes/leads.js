@@ -10,6 +10,8 @@ import {
 import { logActivity } from '../services/activity.js';
 import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
 import { attachDefaultSequenceToLead } from '../services/sequences.js';
+import { assertWithinLimit, handleUsageLimitError } from '../services/usage.js';
+import { getPlanLimits } from '../config/plans.js';
 
 const router = Router();
 router.use(authenticate);
@@ -218,6 +220,176 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+function normalizeLeadEmail(email) {
+  return String(email).trim().toLowerCase();
+}
+
+router.post('/import', async (req, res) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const { leads: leadsData } = req.body;
+
+    if (!Array.isArray(leadsData) || leadsData.length === 0) {
+      return res.status(400).json({ error: 'leads array is required' });
+    }
+
+    const [existingRows] = await pool.query(
+      'SELECT LOWER(TRIM(email)) AS email FROM leads WHERE organization_id = ?',
+      [req.user.organization_id]
+    );
+    const existingEmails = new Set(existingRows.map((row) => row.email));
+    const seenInBatch = new Set();
+
+    const countImportableRows = () => {
+      const batchEmails = new Set();
+      let count = 0;
+
+      for (const row of leadsData) {
+        const { name, email, status } = row || {};
+        if (!name || !email) continue;
+        if (status && !VALID_STATUSES.includes(status)) continue;
+
+        const normalizedEmail = normalizeLeadEmail(email);
+        if (existingEmails.has(normalizedEmail) || batchEmails.has(normalizedEmail)) continue;
+
+        batchEmails.add(normalizedEmail);
+        count++;
+      }
+
+      return count;
+    };
+
+    if (req.user.organization_id) {
+      const [orgRows] = await pool.query('SELECT plan FROM organizations WHERE id = ?', [
+        req.user.organization_id,
+      ]);
+      const planId = orgRows[0]?.plan || 'free';
+      const limits = getPlanLimits(planId);
+      const [countRows] = await pool.query(
+        'SELECT COUNT(*) AS count FROM leads WHERE organization_id = ?',
+        [req.user.organization_id]
+      );
+      const used = countRows[0].count;
+      const remaining = limits.leads - used;
+      const importableCount = countImportableRows();
+
+      if (remaining <= 0 && importableCount > 0) {
+        await assertWithinLimit(req.user.organization_id, 'leads');
+      }
+
+      if (importableCount > remaining) {
+        return res.status(403).json({
+          error: `Cannot import ${importableCount} new leads. You have ${remaining} lead slot(s) remaining on your plan.`,
+          code: 'USAGE_LIMIT_EXCEEDED',
+          metric: 'leads',
+          used,
+          limit: limits.leads,
+          plan: planId,
+        });
+      }
+    }
+
+    const errors = [];
+    const createdLeadIds = [];
+    let imported = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    await connection.beginTransaction();
+
+    for (let i = 0; i < leadsData.length; i++) {
+      const row = leadsData[i];
+      const rowNum = i + 1;
+      const { name, email, phone, source, status, notes } = row || {};
+
+      if (!name || !email) {
+        failed++;
+        errors.push(`Row ${rowNum}: name and email are required.`);
+        continue;
+      }
+
+      if (status && !VALID_STATUSES.includes(status)) {
+        failed++;
+        errors.push(`Row ${rowNum}: invalid status "${status}".`);
+        continue;
+      }
+
+      const normalizedEmail = normalizeLeadEmail(email);
+
+      if (existingEmails.has(normalizedEmail)) {
+        skipped++;
+        errors.push(`Row ${rowNum}: skipped duplicate lead (${email}).`);
+        continue;
+      }
+
+      if (seenInBatch.has(normalizedEmail)) {
+        skipped++;
+        errors.push(`Row ${rowNum}: skipped duplicate in CSV (${email}).`);
+        continue;
+      }
+
+      seenInBatch.add(normalizedEmail);
+      existingEmails.add(normalizedEmail);
+
+      const [result] = await connection.query(
+        `INSERT INTO leads (user_id, organization_id, name, email, phone, source, status, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          req.user.organization_id,
+          name,
+          email,
+          phone || null,
+          source || 'csv',
+          status || 'new',
+          notes || null,
+        ]
+      );
+
+      const leadId = result.insertId;
+      createdLeadIds.push(leadId);
+
+      if (!isLeadManager(req.user.role)) {
+        await connection.query(
+          `INSERT INTO lead_assignments (lead_id, user_id, assigned_by) VALUES (?, ?, ?)`,
+          [leadId, req.user.id, req.user.id]
+        );
+      }
+
+      imported++;
+    }
+
+    await connection.commit();
+
+    for (const leadId of createdLeadIds) {
+      const [leads] = await pool.query('SELECT * FROM leads WHERE id = ?', [leadId]);
+      const lead = leads[0];
+      if (!lead) continue;
+
+      await logActivity(pool, {
+        organizationId: req.user.organization_id,
+        leadId: lead.id,
+        userId: req.user.id,
+        activityType: ACTIVITY_TYPES.LEAD_CREATED,
+        description: `Lead imported: ${lead.name}`,
+        metadata: { email: lead.email, source: lead.source, status: lead.status, import: true },
+      });
+
+      await attachDefaultSequenceToLead(req.user, lead);
+    }
+
+    res.status(201).json({ imported, failed, skipped, errors });
+  } catch (err) {
+    await connection.rollback();
+    if (handleUsageLimitError(err, res)) return;
+    console.error('Import leads error:', err);
+    res.status(500).json({ error: 'Failed to import leads' });
+  } finally {
+    connection.release();
+  }
+});
+
 router.post('/', async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -230,6 +402,10 @@ router.post('/', async (req, res) => {
 
     if (status && !VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    if (req.user.organization_id) {
+      await assertWithinLimit(req.user.organization_id, 'leads');
     }
 
     await connection.beginTransaction();
@@ -292,6 +468,7 @@ router.post('/', async (req, res) => {
     res.status(201).json({ lead });
   } catch (err) {
     await connection.rollback();
+    if (handleUsageLimitError(err, res)) return;
     console.error('Create lead error:', err);
     res.status(500).json({ error: 'Failed to create lead' });
   } finally {

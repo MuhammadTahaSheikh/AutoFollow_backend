@@ -4,6 +4,7 @@ import pool from '../config/db.js';
 import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
 import { logActivity } from './activity.js';
 import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
+import { incrementUsage } from './usage.js';
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -252,6 +253,10 @@ export async function generateMessage(user, leadId, type, customInstructions = '
       description: `AI message generated for ${lead.name}`,
       metadata: { type },
     });
+
+    if (lead.organization_id) {
+      await incrementUsage(lead.organization_id, 'ai_requests');
+    }
 
     return { content, demo: false };
   } catch (err) {

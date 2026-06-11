@@ -74,7 +74,41 @@ async function initDatabase() {
     CREATE TABLE IF NOT EXISTS organizations (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      plan ENUM('free', 'pro', 'agency') DEFAULT 'free',
+      stripe_customer_id VARCHAR(255),
+      stripe_subscription_id VARCHAR(255),
+      subscription_status VARCHAR(50) DEFAULT 'active',
+      current_period_end DATETIME,
+      cancel_at_period_end TINYINT(1) DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_org_stripe_customer (stripe_customer_id)
+    )
+  `);
+
+  for (const sql of [
+    "ALTER TABLE organizations ADD COLUMN plan ENUM('free', 'pro', 'agency') DEFAULT 'free'",
+    'ALTER TABLE organizations ADD COLUMN stripe_customer_id VARCHAR(255)',
+    'ALTER TABLE organizations ADD COLUMN stripe_subscription_id VARCHAR(255)',
+    "ALTER TABLE organizations ADD COLUMN subscription_status VARCHAR(50) DEFAULT 'active'",
+    'ALTER TABLE organizations ADD COLUMN current_period_end DATETIME',
+    'ALTER TABLE organizations ADD COLUMN cancel_at_period_end TINYINT(1) DEFAULT 0',
+    'ALTER TABLE organizations ADD INDEX idx_org_stripe_customer (stripe_customer_id)',
+  ]) {
+    await runAlter(connection, sql);
+  }
+
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS usage_counters (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      organization_id INT NOT NULL,
+      period_start DATE NOT NULL,
+      ai_requests INT DEFAULT 0,
+      emails_sent INT DEFAULT 0,
+      storage_bytes BIGINT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+      UNIQUE KEY uniq_org_period (organization_id, period_start)
     )
   `);
 

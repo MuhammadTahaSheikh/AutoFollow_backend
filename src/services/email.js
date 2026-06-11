@@ -3,6 +3,7 @@ import pool from '../config/db.js';
 import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
 import { logActivity } from './activity.js';
 import { ACTIVITY_TYPES } from '../utils/activityTypes.js';
+import { incrementUsage } from './usage.js';
 
 function hasValidResendKey() {
   const key = process.env.RESEND_API_KEY?.trim();
@@ -164,6 +165,9 @@ async function processScheduledEmail(scheduleId) {
       ACTIVITY_TYPES.EMAIL_SENT,
       `Email sent: "${schedule.subject}" (demo mode)`
     );
+    if (schedule.organization_id) {
+      await incrementUsage(schedule.organization_id, 'emails');
+    }
     return {
       ...schedule,
       status: 'sent',
@@ -213,6 +217,9 @@ async function processScheduledEmail(scheduleId) {
       ACTIVITY_TYPES.EMAIL_SENT,
       `Email sent: "${schedule.subject}"`
     );
+    if (schedule.organization_id) {
+      await incrementUsage(schedule.organization_id, 'emails');
+    }
 
     const [updated] = await pool.query('SELECT * FROM email_schedules WHERE id = ?', [scheduleId]);
     return {

@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { canChangeMemberRole, canInviteRole, ROLE_LABELS, ROLES } from '../utils/roles.js';
 import { sendInviteEmail } from '../services/email.js';
 import { getInviteBaseUrl, getPrimaryFrontendUrl } from '../utils/frontendUrl.js';
+import { assertWithinLimit, handleUsageLimitError } from '../services/usage.js';
 
 const router = Router();
 router.use(authenticate);
@@ -67,6 +68,10 @@ router.post('/invitations', requireRole('super_admin', 'admin'), async (req, res
       return res.status(403).json({ error: 'You cannot invite members with this role' });
     }
 
+    if (req.user.organization_id) {
+      await assertWithinLimit(req.user.organization_id, 'team_members');
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
 
     const [existingUser] = await pool.query(
@@ -127,6 +132,7 @@ router.post('/invitations', requireRole('super_admin', 'admin'), async (req, res
       },
     });
   } catch (err) {
+    if (handleUsageLimitError(err, res)) return;
     console.error('Create invitation error:', err);
     res.status(500).json({ error: 'Failed to create invitation' });
   }

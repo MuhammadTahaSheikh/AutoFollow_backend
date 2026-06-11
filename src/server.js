@@ -1,7 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import os from 'os';
 
+import stripeWebhookRoutes from './routes/stripeWebhook.js';
 import authRoutes from './routes/auth.js';
 import leadsRoutes from './routes/leads.js';
 import aiRoutes from './routes/ai.js';
@@ -12,6 +14,7 @@ import activitiesRoutes from './routes/activities.js';
 import notesRoutes from './routes/notes.js';
 import sequencesRoutes from './routes/sequences.js';
 import webhooksRoutes from './routes/webhooks.js';
+import billingRoutes from './routes/billing.js';
 import { startEmailScheduler } from './jobs/emailScheduler.js';
 
 dotenv.config();
@@ -46,10 +49,19 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
+
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'bestechVison AI CRM API' });
+  res.json({
+    status: 'ok',
+    service: 'bestechVison AI CRM API',
+    backend: process.env.BACKEND_ID || os.hostname(),
+    nodeEnv: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString(),
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -62,6 +74,7 @@ app.use('/api/activities', activitiesRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/sequences', sequencesRoutes);
 app.use('/api/webhooks', webhooksRoutes);
+app.use('/api/billing', billingRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);

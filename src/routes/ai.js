@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.js';
 import { generateMessage, getTemplates } from '../services/ai.js';
+import { assertWithinLimit, handleUsageLimitError } from '../services/usage.js';
 
 const router = Router();
 router.use(authenticate);
@@ -19,9 +20,14 @@ router.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'Invalid type. Use: follow_up, sales, re_engagement' });
     }
 
+    if (req.user.organization_id) {
+      await assertWithinLimit(req.user.organization_id, 'ai_requests');
+    }
+
     const result = await generateMessage(req.user, leadId, type, customInstructions);
     res.json(result);
   } catch (err) {
+    if (handleUsageLimitError(err, res)) return;
     if (err.message === 'Lead not found') {
       return res.status(404).json({ error: err.message });
     }

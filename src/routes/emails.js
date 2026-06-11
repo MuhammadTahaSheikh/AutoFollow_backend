@@ -7,6 +7,7 @@ import {
   cancelEmail,
 } from '../services/email.js';
 import { getEmailReplies, getAllEmailReplies } from '../services/emailReplies.js';
+import { assertWithinLimit, handleUsageLimitError } from '../services/usage.js';
 
 const router = Router();
 router.use(authenticate);
@@ -55,6 +56,10 @@ router.post('/schedule', async (req, res) => {
       return res.status(400).json({ error: 'scheduledAt or delayHours is required' });
     }
 
+    if (req.user.organization_id) {
+      await assertWithinLimit(req.user.organization_id, 'emails');
+    }
+
     const schedule = await scheduleEmail(req.user, {
       leadId,
       subject,
@@ -64,6 +69,7 @@ router.post('/schedule', async (req, res) => {
 
     res.status(201).json({ schedule });
   } catch (err) {
+    if (handleUsageLimitError(err, res)) return;
     if (err.message === 'Lead not found') {
       return res.status(404).json({ error: err.message });
     }
@@ -80,9 +86,14 @@ router.post('/send', async (req, res) => {
       return res.status(400).json({ error: 'leadId, subject, and body are required' });
     }
 
+    if (req.user.organization_id) {
+      await assertWithinLimit(req.user.organization_id, 'emails');
+    }
+
     const result = await sendEmailNow(req.user, { leadId, subject, body });
     res.json({ schedule: result });
   } catch (err) {
+    if (handleUsageLimitError(err, res)) return;
     if (err.message === 'Lead not found') {
       return res.status(404).json({ error: err.message });
     }
