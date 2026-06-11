@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS leads (
   source VARCHAR(100) DEFAULT 'manual',
   status ENUM('new', 'contacted', 'qualified', 'converted', 'lost') DEFAULT 'new',
   notes TEXT,
+  team_member_name VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

@@ -50,7 +50,7 @@ async function syncAssignments(leadId, userIds, assignedBy, organizationId, acto
   if (uniqueIds.length > 0) {
     const [validUsers] = await pool.query(
       `SELECT id, name FROM users
-       WHERE organization_id = ? AND role = 'user' AND id IN (?)`,
+       WHERE organization_id = ? AND role IN ('user', 'admin') AND id IN (?)`,
       [organizationId, uniqueIds]
     );
     validIds = validUsers.map((u) => u.id);
@@ -85,7 +85,7 @@ router.get('/assignable-users', requireRole('super_admin', 'admin'), async (req,
   try {
     const [users] = await pool.query(
       `SELECT id, name, email, role FROM users
-       WHERE organization_id = ? AND role = 'user'
+       WHERE organization_id = ? AND role IN ('user', 'admin')
        ORDER BY name ASC`,
       [req.user.organization_id]
     );
@@ -118,13 +118,8 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY l.created_at DESC';
 
     const [leads] = await pool.query(query, params);
-
-    if (isLeadManager(req.user.role)) {
-      const withAssignees = await attachAssignees(leads);
-      return res.json({ leads: withAssignees });
-    }
-
-    res.json({ leads });
+    const withAssignees = await attachAssignees(leads);
+    res.json({ leads: withAssignees });
   } catch (err) {
     console.error('Get leads error:', err);
     res.status(500).json({ error: 'Failed to fetch leads' });
@@ -224,6 +219,109 @@ function normalizeLeadEmail(email) {
   return String(email).trim().toLowerCase();
 }
 
+function isWeakImportName(name) {
+  if (!name) return true;
+  const normalized = String(name).trim().toLowerCase();
+  return (
+    normalized === 'not given' ||
+    normalized === 'n/a' ||
+    normalized === 'na' ||
+    normalized === 'unknown' ||
+    normalized === '-'
+  );
+}
+
+function pickImportName(...candidates) {
+  for (const candidate of candidates) {
+    if (candidate && !isWeakImportName(candidate)) return String(candidate).trim();
+  }
+  for (const candidate of candidates) {
+    if (candidate && String(candidate).trim()) return String(candidate).trim();
+  }
+  return '';
+}
+
+function pickImportSource(current, incoming) {
+  const isUrl = (value) => value && /^https?:\/\//i.test(String(value));
+  if (isUrl(incoming) && !isUrl(current)) return incoming;
+  if (isUrl(current)) return current;
+  return incoming || current || null;
+}
+
+function appendImportNote(existing, addition) {
+  const next = addition ? String(addition).trim() : '';
+  if (!next) return existing || null;
+  if (!existing || !String(existing).trim()) return next;
+  if (String(existing).includes(next)) return existing;
+  return `${String(existing).trim()}\n${next}`;
+}
+
+function mergeImportLeadFields(existing, incoming) {
+  return {
+    name: pickImportName(existing.name, incoming.name) || existing.name || incoming.name,
+    phone: existing.phone || incoming.phone || null,
+    source: pickImportSource(existing.source, incoming.source) || incoming.source || existing.source || 'csv',
+    notes: appendImportNote(existing.notes, incoming.notes),
+    team_member_name: existing.team_member_name || incoming.team_member_name || null,
+  };
+}
+
+function parseTeamMemberTokens(value) {
+  if (!value || !String(value).trim()) return [];
+  return String(value)
+    .split(/[,;]/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function normalizePersonName(value) {
+  return String(value).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function resolveTeamMemberIds(teamMemberValue, assignableUsers) {
+  const tokens = parseTeamMemberTokens(teamMemberValue);
+  if (tokens.length === 0) {
+    return { userIds: [], notFound: [] };
+  }
+
+  const userIds = [];
+  const notFound = [];
+
+  for (const token of tokens) {
+    const lower = token.toLowerCase().trim();
+    const normalizedToken = normalizePersonName(token);
+
+    const byEmail = assignableUsers.find((user) => user.email.toLowerCase() === lower);
+    if (byEmail) {
+      userIds.push(byEmail.id);
+      continue;
+    }
+
+    const byName = assignableUsers.find(
+      (user) => normalizePersonName(user.name) === normalizedToken
+    );
+    if (byName) {
+      userIds.push(byName.id);
+      continue;
+    }
+
+    const partialMatches = assignableUsers.filter((user) => {
+      const normalizedName = normalizePersonName(user.name);
+      return (
+        normalizedName.includes(normalizedToken) || normalizedToken.includes(normalizedName)
+      );
+    });
+    if (partialMatches.length === 1) {
+      userIds.push(partialMatches[0].id);
+      continue;
+    }
+
+    notFound.push(token);
+  }
+
+  return { userIds: [...new Set(userIds)], notFound };
+}
+
 router.post('/import', async (req, res) => {
   const connection = await pool.getConnection();
 
@@ -239,7 +337,7 @@ router.post('/import', async (req, res) => {
       [req.user.organization_id]
     );
     const existingEmails = new Set(existingRows.map((row) => row.email));
-    const seenInBatch = new Set();
+    const batchLeadsByEmail = new Map();
 
     const countImportableRows = () => {
       const batchEmails = new Set();
@@ -251,7 +349,9 @@ router.post('/import', async (req, res) => {
         if (status && !VALID_STATUSES.includes(status)) continue;
 
         const normalizedEmail = normalizeLeadEmail(email);
-        if (existingEmails.has(normalizedEmail) || batchEmails.has(normalizedEmail)) continue;
+        if (existingEmails.has(normalizedEmail) || batchEmails.has(normalizedEmail)) {
+          continue;
+        }
 
         batchEmails.add(normalizedEmail);
         count++;
@@ -292,16 +392,29 @@ router.post('/import', async (req, res) => {
 
     const errors = [];
     const createdLeadIds = [];
+    const pendingAssignments = [];
     let imported = 0;
     let failed = 0;
     let skipped = 0;
+    let merged = 0;
+
+    let assignableUsers = [];
+    if (isLeadManager(req.user.role)) {
+      const [users] = await pool.query(
+        `SELECT id, name, email FROM users
+         WHERE organization_id = ? AND role IN ('user', 'admin')
+         ORDER BY name ASC`,
+        [req.user.organization_id]
+      );
+      assignableUsers = users;
+    }
 
     await connection.beginTransaction();
 
     for (let i = 0; i < leadsData.length; i++) {
       const row = leadsData[i];
       const rowNum = i + 1;
-      const { name, email, phone, source, status, notes } = row || {};
+      const { name, email, phone, source, status, notes, team_member } = row || {};
 
       if (!name || !email) {
         failed++;
@@ -316,51 +429,130 @@ router.post('/import', async (req, res) => {
       }
 
       const normalizedEmail = normalizeLeadEmail(email);
+      const teamMemberLabel = team_member ? String(team_member).trim() : null;
+      const incomingLead = {
+        name,
+        email,
+        phone: phone || null,
+        source: source || 'csv',
+        status: status || 'new',
+        notes: notes || null,
+        team_member_name: teamMemberLabel,
+      };
 
       if (existingEmails.has(normalizedEmail)) {
-        skipped++;
-        errors.push(`Row ${rowNum}: skipped duplicate lead (${email}).`);
+        const [existingLeadRows] = await connection.query(
+          'SELECT id, name, phone, source, notes, team_member_name FROM leads WHERE organization_id = ? AND LOWER(TRIM(email)) = ? LIMIT 1',
+          [req.user.organization_id, normalizedEmail]
+        );
+        const existingLead = existingLeadRows[0];
+        if (existingLead) {
+          const mergedFields = mergeImportLeadFields(existingLead, incomingLead);
+          await connection.query(
+            `UPDATE leads
+             SET name = ?, phone = ?, source = ?, notes = ?, team_member_name = ?
+             WHERE id = ?`,
+            [
+              mergedFields.name,
+              mergedFields.phone,
+              mergedFields.source,
+              mergedFields.notes,
+              mergedFields.team_member_name,
+              existingLead.id,
+            ]
+          );
+
+          if (teamMemberLabel && isLeadManager(req.user.role)) {
+            const { userIds } = resolveTeamMemberIds(teamMemberLabel, assignableUsers);
+            if (userIds.length > 0) {
+              pendingAssignments.push({ leadId: existingLead.id, userIds });
+            }
+          }
+
+          merged++;
+        } else {
+          skipped++;
+          errors.push(`Row ${rowNum}: skipped duplicate lead (${email}).`);
+        }
         continue;
       }
 
-      if (seenInBatch.has(normalizedEmail)) {
-        skipped++;
-        errors.push(`Row ${rowNum}: skipped duplicate in CSV (${email}).`);
+      if (batchLeadsByEmail.has(normalizedEmail)) {
+        const existingBatchLead = batchLeadsByEmail.get(normalizedEmail);
+        const mergedFields = mergeImportLeadFields(existingBatchLead, incomingLead);
+        await connection.query(
+          `UPDATE leads
+           SET name = ?, phone = ?, source = ?, notes = ?, team_member_name = ?
+           WHERE id = ?`,
+          [
+            mergedFields.name,
+            mergedFields.phone,
+            mergedFields.source,
+            mergedFields.notes,
+            mergedFields.team_member_name,
+            existingBatchLead.id,
+          ]
+        );
+        batchLeadsByEmail.set(normalizedEmail, { ...existingBatchLead, ...mergedFields });
+        merged++;
         continue;
       }
 
-      seenInBatch.add(normalizedEmail);
       existingEmails.add(normalizedEmail);
 
       const [result] = await connection.query(
-        `INSERT INTO leads (user_id, organization_id, name, email, phone, source, status, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO leads (user_id, organization_id, name, email, phone, source, status, notes, team_member_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           req.user.id,
           req.user.organization_id,
-          name,
-          email,
-          phone || null,
-          source || 'csv',
-          status || 'new',
-          notes || null,
+          incomingLead.name,
+          incomingLead.email,
+          incomingLead.phone,
+          incomingLead.source,
+          incomingLead.status,
+          incomingLead.notes,
+          incomingLead.team_member_name,
         ]
       );
 
       const leadId = result.insertId;
       createdLeadIds.push(leadId);
+      batchLeadsByEmail.set(normalizedEmail, { id: leadId, ...incomingLead });
 
       if (!isLeadManager(req.user.role)) {
         await connection.query(
           `INSERT INTO lead_assignments (lead_id, user_id, assigned_by) VALUES (?, ?, ?)`,
           [leadId, req.user.id, req.user.id]
         );
+      } else if (teamMemberLabel) {
+        const { userIds, notFound } = resolveTeamMemberIds(teamMemberLabel, assignableUsers);
+        if (notFound.length > 0 && userIds.length === 0) {
+          errors.push(
+            `Row ${rowNum}: team member "${teamMemberLabel}" saved on lead (invite them from Members to link assignments).`
+          );
+        } else if (notFound.length > 0) {
+          errors.push(`Row ${rowNum}: some team members not found; label saved on lead.`);
+        }
+        if (userIds.length > 0) {
+          pendingAssignments.push({ leadId, userIds });
+        }
       }
 
       imported++;
     }
 
     await connection.commit();
+
+    for (const { leadId, userIds } of pendingAssignments) {
+      await syncAssignments(
+        leadId,
+        userIds,
+        req.user.id,
+        req.user.organization_id,
+        req.user
+      );
+    }
 
     for (const leadId of createdLeadIds) {
       const [leads] = await pool.query('SELECT * FROM leads WHERE id = ?', [leadId]);
@@ -379,7 +571,7 @@ router.post('/import', async (req, res) => {
       await attachDefaultSequenceToLead(req.user, lead);
     }
 
-    res.status(201).json({ imported, failed, skipped, errors });
+    res.status(201).json({ imported, merged, failed, skipped, errors });
   } catch (err) {
     await connection.rollback();
     if (handleUsageLimitError(err, res)) return;

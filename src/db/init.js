@@ -193,6 +193,7 @@ async function initDatabase() {
     'ALTER TABLE leads ADD CONSTRAINT fk_leads_organization FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE'
   );
   await runAlter(connection, 'ALTER TABLE leads ADD INDEX idx_org_status (organization_id, status)');
+  await runAlter(connection, 'ALTER TABLE leads ADD COLUMN team_member_name VARCHAR(255) NULL');
 
   await connection.query(`
     CREATE TABLE IF NOT EXISTS lead_assignments (
