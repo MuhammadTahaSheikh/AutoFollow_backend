@@ -1,11 +1,12 @@
 import cron from 'node-cron';
-import { processPendingEmails } from '../services/email.js';
+import { processPendingEmails, recoverStuckSendingEmails } from '../services/email.js';
 
 export function startEmailScheduler() {
-  // Run once on startup to catch emails missed while server was down
-  processPendingEmails().catch((err) => {
-    console.error('Email scheduler startup error:', err);
-  });
+  recoverStuckSendingEmails()
+    .then(() => processPendingEmails())
+    .catch((err) => {
+      console.error('Email scheduler startup error:', err);
+    });
 
   cron.schedule('* * * * *', async () => {
     try {

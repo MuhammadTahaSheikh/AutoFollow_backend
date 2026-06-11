@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import pool from '../config/db.js';
 import { canAccessLead, leadListFilter } from '../utils/leadAccess.js';
 import { logActivity } from './activity.js';
@@ -13,19 +14,119 @@ function hasValidResendKey() {
   return true;
 }
 
-function getEmailFrom() {
+function getEmailFromName() {
+  return process.env.EMAIL_FROM_NAME?.trim() || 'bestechVison';
+}
+
+function getConfiguredMailbox() {
+  return (
+    process.env.GMAIL_USER?.trim() ||
+    process.env.EMAIL_FROM?.trim()?.replace(/.*<([^>]+)>.*/, '$1') ||
+    getGmailConfig()?.user ||
+    null
+  );
+}
+
+function getEmailFromAddress() {
+  const mailbox = getConfiguredMailbox();
+  if (usesN8n() && mailbox) return mailbox;
+
+  const gmail = getGmailConfig();
+  if (usesGmail() && gmail) return gmail.user;
+
   const from = process.env.EMAIL_FROM?.trim();
-  if (!from) return 'bestechVison <onboarding@resend.dev>';
-  if (from.includes('<')) return from;
-  return `bestechVison <${from}>`;
+  if (from?.includes('<')) {
+    const match = from.match(/<([^>]+)>/);
+    return match?.[1] || from;
+  }
+  if (from) return from;
+  if (gmail) return gmail.user;
+  return 'onboarding@resend.dev';
+}
+
+function getEmailFrom(senderName) {
+  const gmail = getGmailConfig();
+  const mailbox = getConfiguredMailbox();
+  const displayName = senderName?.trim() || getEmailFromName();
+
+  if (usesN8n() && mailbox) {
+    return `${displayName} <${mailbox}>`;
+  }
+
+  if (usesGmail() && gmail) {
+    return `${displayName} <${gmail.user}>`;
+  }
+
+  const from = process.env.EMAIL_FROM?.trim();
+  if (from?.includes('<')) return from;
+  if (from) return `${displayName} <${from}>`;
+  if (gmail) return `${displayName} <${gmail.user}>`;
+  return 'bestechVison <onboarding@resend.dev>';
 }
 
 function isSandboxSender() {
   return getEmailFrom().includes('onboarding@resend.dev');
 }
 
+function getGmailConfig() {
+  const user = process.env.GMAIL_USER?.trim();
+  const pass = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '').trim();
+  if (!user || !pass) return null;
+  return { user, pass };
+}
+
+function getN8nSendConfig() {
+  const url = process.env.N8N_SEND_WEBHOOK_URL?.trim();
+  if (!url) return null;
+  return {
+    url,
+    secret: process.env.N8N_WEBHOOK_SECRET?.trim() || '',
+  };
+}
+
+function getActiveEmailProvider() {
+  const preferred = process.env.EMAIL_PROVIDER?.trim().toLowerCase();
+
+  if (preferred === 'n8n' && getN8nSendConfig()) return 'n8n';
+  if (preferred === 'gmail' && getGmailConfig()) return 'gmail';
+  if (preferred === 'resend' && hasValidResendKey()) return 'resend';
+  if (getN8nSendConfig()) return 'n8n';
+  if (getGmailConfig()) return 'gmail';
+  if (hasValidResendKey()) return 'resend';
+  return null;
+}
+
+function usesN8n() {
+  return getActiveEmailProvider() === 'n8n';
+}
+
+function usesGmail() {
+  return getActiveEmailProvider() === 'gmail';
+}
+
 function getResend() {
+  if (getActiveEmailProvider() && getActiveEmailProvider() !== 'resend') return null;
   return hasValidResendKey() ? new Resend(process.env.RESEND_API_KEY) : null;
+}
+
+function hasEmailDeliveryConfigured() {
+  return Boolean(getActiveEmailProvider());
+}
+
+function getReplyToAddress() {
+  const mailbox = getConfiguredMailbox();
+  if (usesN8n() && mailbox) return mailbox;
+
+  const gmail = getGmailConfig();
+  if (usesGmail() && gmail) return gmail.user;
+
+  return (
+    process.env.INVITE_REPLY_TO?.trim() ||
+    process.env.SUPPORT_EMAIL?.trim() ||
+    mailbox ||
+    gmail?.user ||
+    getEmailFromAddress()
+  );
 }
 
 /** Resend v4 returns { data, error } and does not throw on API errors */
@@ -58,6 +159,135 @@ async function deliverViaResend({ to, subject, html, text, replyTo }) {
   }
 
   return { ok: true, demo: false, message: `Email sent to ${to}`, id: data.id };
+}
+
+async function deliverViaGmail({ to, subject, html, text, replyTo, senderName }) {
+  const config = getGmailConfig();
+  if (!config) {
+    return { ok: false, demo: true, message: 'Gmail SMTP not configured (set GMAIL_USER and GMAIL_APP_PASSWORD)' };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: config.user,
+      pass: config.pass,
+    },
+  });
+
+  const fromHeader = getEmailFrom(senderName);
+  const replyToAddress = replyTo || config.user;
+  const mailOptions = {
+    from: fromHeader,
+    to,
+    subject,
+    html,
+    text,
+  };
+
+  // Only set Reply-To when different from From (avoids confusing Gmail threading)
+  if (replyToAddress.toLowerCase() !== config.user.toLowerCase()) {
+    mailOptions.replyTo = replyToAddress;
+  }
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+
+    return {
+      ok: true,
+      demo: false,
+      message: `Email sent to ${to} from ${config.user}`,
+      id: info.messageId,
+    };
+  } catch (err) {
+    const message = err.message || 'Gmail SMTP rejected the email';
+    console.error('Gmail delivery error:', message);
+    return { ok: false, demo: false, message };
+  }
+}
+
+async function deliverViaN8n({
+  scheduleId,
+  leadId,
+  to,
+  subject,
+  html,
+  text,
+  replyTo,
+  senderName,
+}) {
+  const config = getN8nSendConfig();
+  if (!config) {
+    return { ok: false, demo: true, message: 'N8N_SEND_WEBHOOK_URL not configured' };
+  }
+
+  const fromEmail = getEmailFromAddress();
+  const fromName = senderName?.trim() || getEmailFromName();
+
+  try {
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-webhook-secret': config.secret,
+      },
+      body: JSON.stringify({
+        schedule_id: scheduleId,
+        lead_id: leadId,
+        to,
+        subject,
+        body_text: text,
+        body_html: html,
+        from_name: fromName,
+        from_email: fromEmail,
+        reply_to: replyTo || fromEmail,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || data.ok === false) {
+      const message = data.error || data.message || `n8n send failed (${response.status})`;
+      console.error('n8n send error:', message);
+      return { ok: false, demo: false, message };
+    }
+
+    return {
+      ok: true,
+      demo: false,
+      message: `Email sent to ${to} via n8n from ${fromEmail}`,
+      id: data.message_id || data.messageId || `n8n-${scheduleId}`,
+    };
+  } catch (err) {
+    const message = err.message || 'Failed to reach n8n send webhook';
+    console.error('n8n send error:', message);
+    return { ok: false, demo: false, message };
+  }
+}
+
+async function deliverEmail(payload) {
+  const provider = getActiveEmailProvider();
+  if (provider === 'n8n') return deliverViaN8n(payload);
+  if (provider === 'gmail') return deliverViaGmail(payload);
+  return deliverViaResend(payload);
+}
+
+async function fetchSenderName(userId) {
+  const [rows] = await pool.query('SELECT name FROM users WHERE id = ?', [userId]);
+  return rows[0]?.name || null;
+}
+
+function buildLeadEmailHtml(body) {
+  const safeBody = body.replace(/\n/g, '<br>');
+
+  return `<!DOCTYPE html>
+<html>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0; padding: 16px;">
+  <div>${safeBody}</div>
+</body>
+</html>`;
 }
 
 /** Store datetimes in UTC so MySQL comparisons stay correct across timezones */
@@ -141,7 +371,22 @@ async function logEmailActivity(schedule, activityType, description, extraMetada
   });
 }
 
+async function claimScheduledEmail(scheduleId) {
+  const [result] = await pool.query(
+    `UPDATE email_schedules SET status = 'sending' WHERE id = ? AND status = 'pending'`,
+    [scheduleId]
+  );
+  return result.affectedRows > 0;
+}
+
 async function processScheduledEmail(scheduleId) {
+  const claimed = await claimScheduledEmail(scheduleId);
+  if (!claimed) {
+    const [existing] = await pool.query('SELECT * FROM email_schedules WHERE id = ?', [scheduleId]);
+    if (existing[0]?.status === 'sent') return existing[0];
+    return null;
+  }
+
   const [rows] = await pool.query(
     `SELECT es.*, l.email as lead_email, l.name as lead_name, l.organization_id
      FROM email_schedules es
@@ -154,7 +399,7 @@ async function processScheduledEmail(scheduleId) {
 
   const schedule = rows[0];
 
-  if (!getResend()) {
+  if (!hasEmailDeliveryConfigured()) {
     await pool.query(
       `UPDATE email_schedules SET status = 'sent', sent_at = NOW() WHERE id = ?`,
       [scheduleId]
@@ -178,16 +423,20 @@ async function processScheduledEmail(scheduleId) {
   }
 
   try {
+    const senderName = await fetchSenderName(schedule.user_id);
     const text = schedule.body;
-    const html = `<div style="font-family: sans-serif; line-height: 1.6;">${schedule.body.replace(/\n/g, '<br>')}</div>`;
-    const replyTo = process.env.INVITE_REPLY_TO?.trim() || process.env.SUPPORT_EMAIL?.trim();
+    const html = buildLeadEmailHtml(schedule.body);
+    const replyTo = getReplyToAddress();
 
-    const delivery = await deliverViaResend({
+    const delivery = await deliverEmail({
+      scheduleId: schedule.id,
+      leadId: schedule.lead_id,
       to: schedule.lead_email,
       subject: schedule.subject,
       html,
       text,
       replyTo,
+      senderName,
     });
 
     if (!delivery.ok) {
@@ -205,7 +454,9 @@ async function processScheduledEmail(scheduleId) {
       throw new Error(delivery.message);
     }
 
-    console.log(`Lead email sent to ${schedule.lead_email} (id: ${delivery.id}) subject: ${schedule.subject}`);
+    console.log(
+      `Lead email sent to ${schedule.lead_email} from ${getEmailFromAddress()} (id: ${delivery.id}) subject: ${schedule.subject}`
+    );
 
     await pool.query(
       `UPDATE email_schedules SET status = 'sent', sent_at = NOW() WHERE id = ?`,
@@ -244,16 +495,28 @@ async function processScheduledEmail(scheduleId) {
   }
 }
 
+export async function recoverStuckSendingEmails() {
+  const [result] = await pool.query(
+    `UPDATE email_schedules
+     SET status = 'failed', error_message = 'Send was interrupted — please try again'
+     WHERE status = 'sending'`
+  );
+  if (result.affectedRows > 0) {
+    console.warn(`Recovered ${result.affectedRows} stuck email(s) in sending state`);
+  }
+}
+
 export async function processPendingEmails() {
+  const now = toMysqlUtc(new Date());
   const [pending] = await pool.query(
-    `SELECT id, scheduled_at FROM email_schedules WHERE status = 'pending'`
+    `SELECT id FROM email_schedules
+     WHERE status = 'pending' AND scheduled_at <= ?
+     ORDER BY scheduled_at ASC
+     LIMIT 20`,
+    [now]
   );
 
-  const now = Date.now();
-
   for (const row of pending) {
-    if (new Date(row.scheduled_at).getTime() > now) continue;
-
     try {
       await processScheduledEmail(row.id);
     } catch (err) {
@@ -262,8 +525,38 @@ export async function processPendingEmails() {
   }
 }
 
+export function getOutboundFromEmail() {
+  return getEmailFromAddress();
+}
+
+export function logEmailProviderOnStartup() {
+  const provider = getActiveEmailProvider();
+
+  if (provider === 'n8n') {
+    const config = getN8nSendConfig();
+    console.log(
+      `Email provider: n8n → ${config?.url} (from ${getEmailFromAddress()}, reply-to ${getReplyToAddress()})`
+    );
+    return;
+  }
+
+  if (provider === 'gmail') {
+    const gmail = getGmailConfig();
+    console.log(`Email provider: Gmail SMTP (from ${gmail?.user}, reply-to ${getReplyToAddress()})`);
+    return;
+  }
+
+  if (provider === 'resend') {
+    console.log(`Email provider: Resend (from ${getEmailFromAddress()}, reply-to ${getReplyToAddress()})`);
+    return;
+  }
+
+  console.warn('Email provider: demo mode (set EMAIL_PROVIDER=n8n, gmail, or resend in .env)');
+}
+
 export async function getEmailSchedules(user, leadId) {
   const filter = leadListFilter(user, 'l');
+  const fromEmail = getOutboundFromEmail();
 
   const query = leadId
     ? `SELECT es.*, l.name as lead_name, l.email as lead_email
@@ -279,7 +572,7 @@ export async function getEmailSchedules(user, leadId) {
 
   const params = leadId ? [...filter.params, leadId] : filter.params;
   const [schedules] = await pool.query(query, params);
-  return schedules;
+  return schedules.map((schedule) => ({ ...schedule, from_email: fromEmail }));
 }
 
 export async function cancelEmail(user, scheduleId) {
@@ -356,7 +649,7 @@ export async function sendInviteEmail({
     </div>
   `;
 
-  if (!getResend()) {
+  if (!hasEmailDeliveryConfigured()) {
     return {
       sent: false,
       demo: true,
@@ -364,9 +657,9 @@ export async function sendInviteEmail({
     };
   }
 
-  const replyTo = process.env.INVITE_REPLY_TO?.trim() || process.env.SUPPORT_EMAIL?.trim();
+  const replyTo = getReplyToAddress();
 
-  const delivery = await deliverViaResend({ to, subject, html, text, replyTo });
+  const delivery = await deliverEmail({ to, subject, html, text, replyTo });
 
   if (!delivery.ok) {
     console.error(`Invite email failed for ${to}:`, delivery.message);

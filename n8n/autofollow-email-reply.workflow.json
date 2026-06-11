@@ -1,53 +1,42 @@
 {
-  "name": "bestechVison CRM - Capture Lead Email Replies (Hostinger IMAP)",
+  "name": "bestechVison CRM - Capture Lead Email Replies (Gmail)",
   "nodes": [
     {
       "parameters": {
-        "mailbox": "INBOX",
-        "postProcessAction": "read",
-        "format": "simple",
-        "options": {}
-      },
-      "id": "imap-trigger",
-      "name": "Poll Hostinger Inbox",
-      "type": "n8n-nodes-base.emailReadImap",
-      "typeVersion": 2,
-      "position": [0, 0],
-      "credentials": {
-        "imap": {
-          "id": "REPLACE_WITH_YOUR_IMAP_CREDENTIAL_ID",
-          "name": "Hostinger info@bestechvision.com"
+        "pollTimes": {
+          "item": [{ "mode": "everyMinute" }]
+        },
+        "filters": {
+          "readStatus": "unread",
+          "includeSpamTrash": false
+        },
+        "options": {
+          "simple": false
         }
       },
-      "notes": "Use Email Trigger (IMAP), NOT Gmail. Hostinger: imap.hostinger.com:993 SSL. Account: info@bestechvision.com"
+      "id": "gmail-trigger",
+      "name": "Poll Gmail Inbox",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_OAUTH_CREDENTIAL_ID",
+          "name": "Gmail muhammadtahakamran19@gmail.com"
+        }
+      },
+      "notes": "Uses the same Gmail OAuth credential as the send workflow. Polls unread INBOX every minute."
     },
     {
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": false },
-          "conditions": [
-            {
-              "id": "not-from-us",
-              "leftValue": "={{ $json.from }}",
-              "rightValue": "bestechvision.com",
-              "operator": { "type": "string", "operation": "notContains" }
-            },
-            {
-              "id": "has-subject",
-              "leftValue": "={{ $json.subject }}",
-              "rightValue": "",
-              "operator": { "type": "string", "operation": "isNotEmpty" }
-            }
-          ],
-          "combinator": "and"
-        }
+        "jsCode": "const OUR = 'muhammadtahakamran19@gmail.com';\nconst items = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  const fromRaw = String(j.From || j.from || '');\n  const match = fromRaw.match(/<([^>]+@[^>]+)>/i);\n  const fromEmail = (match?.[1] || fromRaw).replace(/[<>'\"]/g, '').trim().toLowerCase();\n  const subject = String(j.Subject || j.subject || '').trim();\n  if (!subject || !fromEmail.includes('@')) continue;\n  if (fromEmail === OUR.toLowerCase()) continue;\n  items.push({ json: { ...j, fromEmail } });\n}\nreturn items;"
       },
       "id": "filter-replies",
       "name": "Filter Real Lead Replies",
-      "type": "n8n-nodes-base.filter",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [220, 0],
-      "notes": "Skip emails sent from your own domain (bestechVison outbound copies)."
+      "notes": "Extract sender email only — avoids false drops when quoted reply text contains your address."
     },
     {
       "parameters": {
@@ -56,25 +45,25 @@
             {
               "id": "from_email",
               "name": "from_email",
-              "value": "={{ ($json.from?.value?.[0]?.address || $json.from?.address || (typeof $json.from === 'string' ? ($json.from.match(/<([^>]+@[^>]+)>/)?.[1] || ($json.from.includes('@') ? $json.from.replace(/[<>'\"]/g, '').trim() : '')) : '') || $json.metadata?.['return-path']?.toString().match(/<([^>]+@[^>]+)>/)?.[1] || $json.metadata?.['return-path']?.toString().replace(/[<>'\"]/g, '').trim() || '') }}",
+              "value": "={{ $json.fromEmail || ($json.From || '').match(/<([^>]+@[^>]+)>/)?.[1] || ($json.From || '').replace(/[<>'\"]/g, '').trim() }}",
               "type": "string"
             },
             {
               "id": "from_name",
               "name": "from_name",
-              "value": "={{ ($json.from?.value?.[0]?.name || $json.from?.name || $json.from || '').toString().replace(/<.*>/, '').trim() }}",
+              "value": "={{ ($json.from?.value?.[0]?.name || $json.from?.name || $json.from || $json.From || '').toString().replace(/<.*>/, '').trim() }}",
               "type": "string"
             },
             {
               "id": "subject",
               "name": "subject",
-              "value": "={{ $json.subject }}",
+              "value": "={{ $json.subject || $json.Subject || '' }}",
               "type": "string"
             },
             {
               "id": "body_text",
               "name": "body_text",
-              "value": "={{ $json.textPlain || $json.text || $json.textHtml?.replace(/<[^>]+>/g, ' ') || '' }}",
+              "value": "={{ $json.textPlain || $json.text || $json.snippet || $json.textHtml?.replace(/<[^>]+>/g, ' ') || '' }}",
               "type": "string"
             },
             {
@@ -86,25 +75,25 @@
             {
               "id": "message_id",
               "name": "message_id",
-              "value": "={{ $json.metadata?.['message-id'] || $json.messageId || $json.uid || '' }}",
+              "value": "={{ $json.id || $json.messageId || '' }}",
               "type": "string"
             },
             {
               "id": "received_at",
               "name": "received_at",
-              "value": "={{ $json.date || $now.toISO() }}",
+              "value": "={{ $json.date || $json.internalDate || $now.toISO() }}",
               "type": "string"
             },
             {
               "id": "raw_from",
               "name": "raw_from",
-              "value": "={{ $json.from }}",
+              "value": "={{ $json.from || $json.From || '' }}",
               "type": "string"
             },
             {
-              "id": "return_path",
-              "name": "return_path",
-              "value": "={{ $json.metadata?.['return-path'] || '' }}",
+              "id": "gmail_id",
+              "name": "gmail_id",
+              "value": "={{ $json.id || '' }}",
               "type": "string"
             }
           ]
@@ -119,7 +108,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = [];\nfor (const item of $input.all()) {\n  let text = (item.json.body_text || '').replace(/\\r\\n/g, '\\n');\n  text = text.split(/\\nOn .+ wrote:\\s*\\n?/i)[0];\n  text = text.split(/\\nFrom: .+\\nSent:/i)[0];\n  text = text.replace(/\\n>+.*/gs, '').trim();\n  items.push({ json: { ...item.json, body_text: text || '(No content)' } });\n}\nreturn items;"
+        "jsCode": "const items = [];\nfor (const item of $input.all()) {\n  let text = (item.json.body_text || '').replace(/\\r\\n/g, '\\n');\n  text = text.split(/\\nOn .+ wrote:\\s*\\n?/i)[0];\n  text = text.split(/\\nFrom: .+\\nSent:/i)[0];\n  text = text.replace(/\\n>+[\\s\\S]*/, '').trim();\n  items.push({ json: { ...item.json, body_text: text || '(No content)' } });\n}\nreturn items;"
       },
       "id": "strip-quotes",
       "name": "Strip Quoted Reply History",
@@ -130,7 +119,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://51.20.191.5/api/webhooks/n8n/email-reply",
+        "url": "http://187.124.52.234/api/webhooks/n8n/email-reply",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -140,7 +129,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {\n  from_email: $json.from_email,\n  from: $json.raw_from || $json.from_email,\n  'return-path': $json.return_path,\n  from_name: $json.from_name,\n  subject: $json.subject,\n  body_text: $json.body_text,\n  body_html: $json.body_html || '',\n  message_id: String($json.message_id || ''),\n  received_at: $json.received_at,\n  source: 'n8n'\n} }}",
+        "jsonBody": "={{ {\n  from_email: $json.from_email,\n  from: $json.raw_from || $json.from_email,\n  from_name: $json.from_name,\n  subject: $json.subject,\n  body_text: $json.body_text,\n  body_html: $json.body_html || '',\n  message_id: String($json.message_id || ''),\n  received_at: $json.received_at,\n  source: 'n8n'\n} }}",
         "options": {}
       },
       "id": "crm-webhook",
@@ -159,6 +148,12 @@
               "leftValue": "={{ $json.statusCode }}",
               "rightValue": 201,
               "operator": { "type": "number", "operation": "equals" }
+            },
+            {
+              "id": "status-dup",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": { "type": "number", "operation": "equals" }
             }
           ],
           "combinator": "or"
@@ -169,10 +164,28 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "markAsRead",
+        "messageId": "={{ $('Prepare CRM Payload').item.json.gmail_id }}"
+      },
+      "id": "mark-read",
+      "name": "Mark as Read",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1320, -40],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_GMAIL_OAUTH_CREDENTIAL_ID",
+          "name": "Gmail muhammadtahakamran19@gmail.com"
+        }
+      }
     }
   ],
   "connections": {
-    "Poll Hostinger Inbox": {
+    "Poll Gmail Inbox": {
       "main": [[{ "node": "Filter Real Lead Replies", "type": "main", "index": 0 }]]
     },
     "Filter Real Lead Replies": {
@@ -186,6 +199,12 @@
     },
     "Send to CRM Webhook": {
       "main": [[{ "node": "Check CRM Response", "type": "main", "index": 0 }]]
+    },
+    "Check CRM Response": {
+      "main": [
+        [{ "node": "Mark as Read", "type": "main", "index": 0 }],
+        []
+      ]
     }
   },
   "settings": { "executionOrder": "v1" },

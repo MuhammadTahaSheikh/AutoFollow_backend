@@ -19,8 +19,9 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 const GEMINI_FALLBACK_MODELS = [
   GEMINI_MODEL,
   'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash-lite',
   'gemini-2.0-flash',
-  'gemini-1.5-flash',
 ].filter((m, i, arr) => arr.indexOf(m) === i);
 
 const SYSTEM_PROMPT = `You are a professional sales and follow-up email writer for bestechVison AI CRM.
@@ -30,7 +31,17 @@ If a detail is missing, omit that sentence rather than inventing a placeholder.
 Keep emails under 200 words unless asked otherwise.
 Do not include a subject line unless specifically requested — output only the email body.`;
 
+function getOutboundSenderEmail(profile) {
+  const provider = process.env.EMAIL_PROVIDER?.trim().toLowerCase();
+  const mailbox = process.env.GMAIL_USER?.trim() || process.env.EMAIL_FROM?.trim();
+  if ((provider === 'gmail' || provider === 'n8n') && mailbox) {
+    return mailbox.replace(/.*<([^>]+)>.*/, '$1');
+  }
+  return profile.email;
+}
+
 function buildSenderContext(profile) {
+  const senderEmail = getOutboundSenderEmail(profile);
   const lines = [
     `Sender name: ${profile.name}`,
     profile.job_title ? `Sender title: ${profile.job_title}` : null,
@@ -40,7 +51,7 @@ function buildSenderContext(profile) {
     profile.services_description
       ? `What we offer: ${profile.services_description}`
       : null,
-    `Sender email: ${profile.email}`,
+    `Sender email (use this in the signature): ${senderEmail}`,
   ].filter(Boolean);
 
   return lines.join('\n');

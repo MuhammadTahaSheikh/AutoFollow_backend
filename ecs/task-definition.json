@@ -27,9 +27,10 @@
         { "name": "JWT_EXPIRES_IN", "value": "7d" },
         { "name": "AI_PROVIDER", "value": "gemini" },
         { "name": "GEMINI_MODEL", "value": "gemini-2.5-flash-lite" },
-        { "name": "EMAIL_FROM", "value": "bestechVison <noreply@bestechvision.com>" },
-        { "name": "INVITE_REPLY_TO", "value": "info@bestechvision.com" },
-        { "name": "SUPPORT_EMAIL", "value": "info@bestechvision.com" },
+        { "name": "EMAIL_PROVIDER", "value": "gmail" },
+        { "name": "GMAIL_USER", "value": "muhammadtahakamran19@gmail.com" },
+        { "name": "EMAIL_FROM", "value": "muhammadtahakamran19@gmail.com" },
+        { "name": "INVITE_REPLY_TO", "value": "muhammadtahakamran19@gmail.com" },
         {
           "name": "FRONTEND_URL",
           "value": "https://auto-follow-frontend.vercel.app,http://localhost:3000,http://localhost:3001"

@@ -16,6 +16,7 @@ import sequencesRoutes from './routes/sequences.js';
 import webhooksRoutes from './routes/webhooks.js';
 import billingRoutes from './routes/billing.js';
 import { startEmailScheduler } from './jobs/emailScheduler.js';
+import { logEmailProviderOnStartup } from './services/email.js';
 
 dotenv.config();
 
@@ -83,5 +84,6 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, HOST, () => {
   console.log(`bestechVison API running on http://${HOST}:${PORT} (${process.env.NODE_ENV || 'development'})`);
+  logEmailProviderOnStartup();
   startEmailScheduler();
 });

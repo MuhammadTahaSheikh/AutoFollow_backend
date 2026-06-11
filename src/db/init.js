@@ -249,6 +249,11 @@ async function initDatabase() {
     )
   `);
 
+  await runAlter(
+    connection,
+    "ALTER TABLE email_schedules MODIFY COLUMN status ENUM('pending', 'sending', 'sent', 'failed', 'cancelled') DEFAULT 'pending'"
+  );
+
   await connection.query(`
     CREATE TABLE IF NOT EXISTS ai_templates (
       id INT AUTO_INCREMENT PRIMARY KEY,
